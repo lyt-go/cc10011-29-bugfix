@@ -1,6 +1,8 @@
 """示例数据：每个模块给几条不同状态的记录，方便起服务后立刻看到内容。"""
 from __future__ import annotations
 
+import random
+from datetime import date, timedelta
 from typing import Any
 
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
@@ -46,7 +48,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   'abnormal': False,
   '大盘编号': 'DASH-0001',
   '大盘名称': '监控大盘样例1',
-  '包含指标组': '监控大盘样例1',
+  '包含指标组': 'REAL-0001,REAL-0002',
   '布局模板': '监控大盘样例1',
   '刷新频率秒': '监控大盘样例1',
   '对比周期': '监控大盘样例1',
@@ -58,7 +60,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   'abnormal': True,
   '大盘编号': 'DASH-0002',
   '大盘名称': '监控大盘样例2',
-  '包含指标组': '监控大盘样例2',
+  '包含指标组': 'REAL-0002',
   '布局模板': '监控大盘样例2',
   '刷新频率秒': '监控大盘样例2',
   '对比周期': '监控大盘样例2',
@@ -70,7 +72,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   'abnormal': False,
   '大盘编号': 'DASH-0003',
   '大盘名称': '监控大盘样例3',
-  '包含指标组': '监控大盘样例3',
+  '包含指标组': 'REAL-0003',
   '布局模板': '监控大盘样例3',
   '刷新频率秒': '监控大盘样例3',
   '对比周期': '监控大盘样例3',
@@ -477,37 +479,43 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   'pending': True,
   'abnormal': False,
   '方案编号': 'TREN-0001',
-  '预测指标': '趋势预测样例1',
-  '算法模型': '趋势预测样例1',
-  '历史窗口天': '趋势预测样例1',
-  '预测窗口天': '趋势预测样例1',
-  '置信区间': '趋势预测样例1',
-  '季节性开关': '趋势预测样例1',
-  '外部因子': '趋势预测样例1'},
+  '预测指标': 'REAL-0001',
+  '算法模型': 'Holt-Winters 加法模型',
+  '历史窗口天': '90',
+  '预测窗口天': '14',
+  '置信区间': '90%',
+  '季节性开关': '开',
+  '外部因子': '促销活动',
+  '已发布版本': None,
+  '候选版本': None},
  {'id': 2,
   'status': '模型评估中',
   'pending': True,
   'abnormal': True,
   '方案编号': 'TREN-0002',
-  '预测指标': '趋势预测样例2',
-  '算法模型': '趋势预测样例2',
-  '历史窗口天': '趋势预测样例2',
-  '预测窗口天': '趋势预测样例2',
-  '置信区间': '趋势预测样例2',
-  '季节性开关': '趋势预测样例2',
-  '外部因子': '趋势预测样例2'},
+  '预测指标': 'REAL-0002',
+  '算法模型': 'ARIMA(1,1,1)',
+  '历史窗口天': '60',
+  '预测窗口天': '7',
+  '置信区间': '95%',
+  '季节性开关': '关',
+  '外部因子': '',
+  '已发布版本': None,
+  '候选版本': None},
  {'id': 3,
   'status': '已部署',
   'pending': False,
   'abnormal': False,
   '方案编号': 'TREN-0003',
-  '预测指标': '趋势预测样例3',
-  '算法模型': '趋势预测样例3',
-  '历史窗口天': '趋势预测样例3',
-  '预测窗口天': '趋势预测样例3',
-  '置信区间': '趋势预测样例3',
-  '季节性开关': '趋势预测样例3',
-  '外部因子': '趋势预测样例3'}],
+  '预测指标': 'REAL-0003',
+  '算法模型': 'Prophet 分段趋势',
+  '历史窗口天': '120',
+  '预测窗口天': '30',
+  '置信区间': '95%',
+  '季节性开关': '开',
+  '外部因子': '节假日,营销投放',
+  '已发布版本': None,
+  '候选版本': None}],
     "viztemplate": [{'id': 1,
   'status': '草稿',
   'pending': True,
@@ -653,3 +661,38 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '评分周期': '数据质量分样例3',
   '总分数': '数据质量分样例3'}]
 }
+
+
+def build_metric_history() -> list[dict[str, Any]]:
+    """监控指标历史序列：趋势 + 周季节 + 噪声，锚定到固定末日，保证预测结果可复现。
+
+    序列里故意留少量缺失点和离群点，给趋势预测的历史数据清洗阶段留出
+    真实的清洗对象；生成器用固定随机种子，任何时候起服务得到的序列都一致。
+    """
+    history_end = date(2026, 11, 15)
+    days = 150
+    profiles = {
+        "REAL-0001": {"base": 320.0, "trend": 0.6, "season": 24.0, "noise": 6.0},
+        "REAL-0002": {"base": 180.0, "trend": -0.25, "season": 12.0, "noise": 4.0},
+        "REAL-0003": {"base": 520.0, "trend": 0.9, "season": 40.0, "noise": 9.0},
+    }
+    rng = random.Random(20261115)
+    rows: list[dict[str, Any]] = []
+    row_id = 0
+    for metric, profile in profiles.items():
+        for offset in range(days):
+            current = history_end - timedelta(days=days - 1 - offset)
+            weekly = profile["season"] if current.weekday() >= 5 else -profile["season"] / 2
+            value = profile["base"] + profile["trend"] * offset + weekly + rng.gauss(0, profile["noise"])
+            stored: float | None = round(value, 2)
+            roll = rng.random()
+            if roll < 0.02:
+                stored = None  # 缺失点：清洗阶段应当剔除
+            elif roll < 0.035:
+                stored = round(value * 3.1, 2)  # 离群点：清洗阶段应当剔除
+            row_id += 1
+            rows.append({"id": row_id, "指标编号": metric, "日期": current.isoformat(), "值": stored})
+    return rows
+
+
+METRIC_HISTORY_ROWS: list[dict[str, Any]] = build_metric_history()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services import forecast_pipeline
 from app.store import store
 
 MODULE = "dashboard"
@@ -31,7 +32,18 @@ class DashboardService:
         return rows[start:start + size], total
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
-        return store.find(MODULE, entry_id)
+        entry = store.find(MODULE, entry_id)
+        if entry is None:
+            return None
+        detail = dict(entry)
+        # 共享链路：大盘详情直接消费趋势预测结果数据集，预测区间、季节性判定、
+        # 外部因子与方案详情落在同一个已发布版本上。
+        raw = str(entry.get("包含指标组") or "")
+        for sep in ["，", "、", ";", "；", " "]:
+            raw = raw.replace(sep, ",")
+        metrics = [part.strip() for part in raw.split(",") if part.strip()]
+        detail["预测覆盖"] = forecast_pipeline.forecast_overlay(metrics)
+        return detail
 
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [field for field in REQUIRED_FIELDS if not str(values.get(field) or "").strip()]

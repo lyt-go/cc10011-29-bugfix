@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { request } from '@/api/client'
+import ForecastChart from '@/components/ForecastChart'
 
 const ENDPOINT = '/api/dashboard'
 const columns = [
@@ -24,22 +25,19 @@ const statuses = [
   "已发布",
   "已下线"
 ]
-const stats = [
-  {
-    "label": "大盘配置总数",
-    "value": 0
-  },
-  {
-    "label": "已发布大盘",
-    "value": 0
-  },
-  {
-    "label": "评审中大盘",
-    "value": 0
-  }
-]
 
 type Row = Record<string, string | number | null>
+type IntervalPoint = { 日期: string; 预测值: number; 下限: number; 上限: number }
+type ForecastOverlay = {
+  指标编号: string
+  已发布: boolean
+  方案编号?: string
+  版本号?: number
+  季节性判定?: { 启用: boolean; 周期: string | null; 强度: number; 判定依据: string }
+  外部因子?: string[]
+  预测区间?: IntervalPoint[]
+  发布时间?: string
+}
 
 export default function DashboardView() {
   const [rows, setRows] = useState<Row[]>([])
@@ -47,6 +45,8 @@ export default function DashboardView() {
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
   const filterFields = useMemo(() => columns.slice(0, 3), [])
+  const [overlayFor, setOverlayFor] = useState<number | null>(null)
+  const [overlays, setOverlays] = useState<ForecastOverlay[]>([])
 
   const reload = useCallback(async () => {
     setErrorMessage('')
@@ -79,9 +79,32 @@ export default function DashboardView() {
         throw new Error('监控大盘动作未生效，请稍后重试')
       }
       await reload()
+      if (overlayFor !== null) await loadOverlay(overlayFor)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '监控大盘操作失败')
     }
+  }
+
+  async function loadOverlay(entryId: number) {
+    // 共享链路：大盘详情直接消费趋势预测结果数据集，与方案详情同一版本。
+    try {
+      const response = await request(`${ENDPOINT}/${entryId}`)
+      if (!response.ok) throw new Error('大盘详情读取失败')
+      const payload = await response.json()
+      setOverlays(payload.预测覆盖 ?? [])
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '大盘预测覆盖读取失败')
+    }
+  }
+
+  async function toggleOverlay(entryId: number) {
+    if (overlayFor === entryId) {
+      setOverlayFor(null)
+      setOverlays([])
+      return
+    }
+    setOverlayFor(entryId)
+    await loadOverlay(entryId)
   }
 
   return (
@@ -89,7 +112,7 @@ export default function DashboardView() {
       <header className="page-head">
         <div>
           <h2>监控大盘管理</h2>
-          <p className="page-desc">配置实时监控大盘，组合指标卡片和图表形成业务全景视图。</p>
+          <p className="page-desc">配置实时监控大盘，组合指标卡片和图表形成业务全景视图；预测区间来自趋势预测已发布数据集。</p>
         </div>
         <div className="page-actions">
           <button className="btn primary" type="button" onClick={() => setErrorMessage('大盘配置登记入口尚未接入审批流')}>
@@ -100,15 +123,6 @@ export default function DashboardView() {
           </button>
         </div>
       </header>
-
-      <div className="stat-row">
-        {stats.map((item) => (
-          <article key={item.label} className="stat-card">
-            <span className="stat-label">{item.label}</span>
-            <strong className="stat-value">{item.value}</strong>
-          </article>
-        ))}
-      </div>
 
       <form className="filter-bar" onSubmit={(event) => { event.preventDefault(); void reload() }}>
         {filterFields.map((field) => (
@@ -142,6 +156,9 @@ export default function DashboardView() {
                     {action}
                   </button>
                 ))}
+                <button className="link" type="button" onClick={() => void toggleOverlay(Number(row.id))}>
+                  {overlayFor === Number(row.id) ? '收起预测' : '预测覆盖'}
+                </button>
               </td>
             </tr>
           ))}
@@ -152,6 +169,34 @@ export default function DashboardView() {
           )}
         </tbody>
       </table>
+
+      {overlayFor !== null && (
+        <div className="detail-panel">
+          <h3>大盘预测覆盖（消费趋势预测结果数据集，随预测状态同步更新）</h3>
+          {overlays.length === 0 && <p className="muted-text">该大盘的指标组暂无预测数据</p>}
+          {overlays.map((overlay) => (
+            <div key={overlay.指标编号} className="overlay-block">
+              {!overlay.已发布 ? (
+                <p className="muted-text">指标 {overlay.指标编号} 暂无已发布的预测版本</p>
+              ) : (
+                <>
+                  <div className="overlay-meta">
+                    <span>指标 {overlay.指标编号}</span>
+                    <span>方案 {overlay.方案编号}</span>
+                    <span>版本 v{overlay.版本号}</span>
+                    <span>
+                      季节性：{overlay.季节性判定?.启用 ? `启用（${overlay.季节性判定.周期}，强度 ${overlay.季节性判定.强度}）` : '未启用'}
+                    </span>
+                    <span>外部因子：{overlay.外部因子 && overlay.外部因子.length > 0 ? overlay.外部因子.join('、') : '无'}</span>
+                    <span>发布时间 {overlay.发布时间 ?? '—'}</span>
+                  </div>
+                  <ForecastChart points={overlay.预测区间 ?? []} />
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <footer className="page-foot">
         <span>共 {total} 条监控大盘记录</span>
